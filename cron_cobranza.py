@@ -5,40 +5,31 @@ from urllib.parse import urlparse
 from datetime import date, datetime
 from supabase import create_client
 
-# 1. Credenciales limpias
 raw_supabase_url = os.environ.get("SUPABASE_URL", "").strip()
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY", "").strip()
 META_PHONE_ID = os.environ.get("META_PHONE_ID", "").strip()
 META_WA_TOKEN = os.environ.get("META_WA_TOKEN", "").strip()
 
-if not raw_supabase_url or not SUPABASE_KEY:
-    print("❌ ERROR: Faltan credenciales de Supabase.")
-    sys.exit(1)
-
-if not META_PHONE_ID or not META_WA_TOKEN:
-    print("❌ ERROR: Faltan credenciales de Meta.")
+if not raw_supabase_url or not SUPABASE_KEY or not META_PHONE_ID or not META_WA_TOKEN:
+    print("❌ ERROR: Faltan credenciales en GitHub Secrets.")
     sys.exit(1)
 
 parsed = urlparse(raw_supabase_url)
 SUPABASE_URL = f"{parsed.scheme}://{parsed.netloc}"
-
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-def formatear_numero_mexico(telefono):
-    # Quitar signos, espacios y guiones
+def formatear_numero_meta(telefono):
     num = str(telefono).replace("+", "").replace(" ", "").replace("-", "").strip()
-    
-    # Si viene con 10 dígitos (ej. 8128244165), agregar 521
+    # Si viene con 10 dígitos (8128244165), agregar 52
     if len(num) == 10:
-        return "521" + num
-    # Si viene con 52 y 10 dígitos (ej. 528128244165), insertar el 1
-    if len(num) == 12 and num.startswith("52"):
-        return "521" + num[2:]
-        
+        return "52" + num
+    # Si viene con 521 (13 dígitos), quitar el 1 para coincidir con la lista de Meta
+    if len(num) == 13 and num.startswith("521"):
+        return "52" + num[3:]
     return num
 
 def enviar_whatsapp(telefono, mensaje):
-    numero_destino = formatear_numero_mexico(telefono)
+    numero_destino = formatear_numero_meta(telefono)
     url = f"https://graph.facebook.com/v19.0/{META_PHONE_ID}/messages"
     headers = {
         "Authorization": f"Bearer {META_WA_TOKEN}",
@@ -116,7 +107,7 @@ def ejecutar_cobranza():
                     supabase.table("cobranza").update({"ultimo_recordatorio": str(hoy)}).eq("id", item["id"]).execute()
                     print(f"✅ Notificación enviada con éxito a {cliente} al número: +{num_envio}")
                 else:
-                    print(f"❌ Error al enviar a {cliente}: {respuesta}")
+                    print(f"❌ Error de WhatsApp para {cliente}: {respuesta}")
 
         except Exception as err:
             print(f"⚠️ Error procesando {item.get('cliente')}: {err}")
