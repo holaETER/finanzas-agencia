@@ -31,7 +31,6 @@ with tab1:
     col1, col2 = st.columns(2)
     with col1:
         fecha = st.date_input("Fecha de pago", date.today())
-        # Clasificaciones exactas del Estado de Resultados
         clasificacion = st.selectbox("Clasificación", [
             "Gastos administrativos", 
             "Gastos de operación", 
@@ -39,8 +38,8 @@ with tab1:
             "Costos de ventas",
             "Gastos financieros"
         ])
-        servicio = st.text_input("Servicio / Concepto", placeholder="Honorarios, Capcut, Google One, Comisiones...")
-        proveedor = st.text_input("Proveedor", placeholder="Pamela Gracia, Ivet Hernandez, Canva, Banco...")
+        servicio = st.text_input("Servicio / Concepto", placeholder="Honorarios, Capcut, Google One, Telcel...")
+        proveedor = st.text_input("Proveedor", placeholder="Pamela Gracia, Ivet Hernandez, Canva...")
     
     with col2:
         total_ingresado = st.number_input("Monto Total Pagado (con IVA incluido)", min_value=0.0, step=100.0, format="%.2f")
@@ -136,75 +135,112 @@ with tab2:
             st.warning(f"Aviso en módulo Cobranza: {e}")
 
 # ==============================
-# TAB 3: ESTADO DE RESULTADOS (P&L EXACTO)
+# TAB 3: ESTADO DE RESULTADOS CON FILTRO MENSUAL
 # ==============================
 with tab3:
-    st.subheader("Estado de Resultados Oficial")
+    st.subheader("Estado de Resultados Mensual y Comparativo")
     
-    # 1. Controles Superiores: Ventas del Mes
-    col_pnl1, col_pnl2 = st.columns([1, 1])
-    with col_pnl1:
-        # Permite ingresar las Ventas Netas del periodo
-        ventas_netas = st.number_input("Ventas Netas del Periodo ($ MXN):", min_value=0.0, value=290700.00, step=1000.0)
-    with col_pnl2:
-        st.info("💡 Los gastos se calculan y clasifican automáticamente en tiempo real con lo que capturas en la Tab 1.")
+    MESES_DICT = {
+        "01": "Enero", "02": "Febrero", "03": "Marzo", "04": "Abril",
+        "05": "Mayo", "06": "Junio", "07": "Julio", "08": "Agosto",
+        "09": "Septiembre", "10": "Octubre", "11": "Noviembre", "12": "Diciembre"
+    }
 
     try:
         res_egresos = supabase.table("egresos").select("*").execute()
-        df_eg = pd.DataFrame(res_egresos.data) if res_egresos.data else pd.DataFrame()
+        if res_egresos.data:
+            df_eg = pd.DataFrame(res_egresos.data)
+            df_eg["fecha_dt"] = pd.to_datetime(df_eg["fecha"])
+            df_eg["periodo_clave"] = df_eg["fecha_dt"].dt.strftime("%Y-%m")
+            
+            # Generar lista de meses disponibles en los datos
+            periodos_unicos = sorted(df_eg["periodo_clave"].unique(), reverse=True)
+            opciones_meses = ["Histórico Completo (Acumulado)"]
+            
+            mapa_etiquetas = {}
+            for p in periodos_unicos:
+                anio, mes = p.split("-")
+                nombre_formato = f"{MESES_DICT.get(mes, mes)} {anio}"
+                opciones_meses.append(nombre_formato)
+                mapa_etiquetas[nombre_formato] = p
 
-        # Calcular sumas por clasificación
-        def obtener_total_clasif(clasif_nombre):
-            if df_eg.empty or "clasificacion" not in df_eg.columns:
-                return 0.0
-            filtro = df_eg[df_eg["clasificacion"].str.strip().str.lower() == clasif_nombre.lower()]
-            return float(filtro["total_neto"].sum())
+            # Selector de Mes en la interfaz
+            col_filtro1, col_filtro2, col_filtro3 = st.columns([1.5, 1.5, 1])
+            with col_filtro1:
+                mes_seleccionado = st.selectbox("📅 Selecciona el Periodo / Mes:", opciones_meses)
+            
+            # Filtrar DataFrame según selección
+            if mes_seleccionado == "Histórico Completo (Acumulado)":
+                df_filtrado = df_eg
+                titulo_periodo = "Histórico Acumulado 2026"
+            else:
+                clave_sel = mapa_etiquetas[mes_seleccionado]
+                df_filtrado = df_eg[df_eg["periodo_clave"] == clave_sel]
+                titulo_periodo = mes_seleccionado
 
-        costo_ventas = obtener_total_clasif("Costos de ventas")
-        gastos_operacion = obtener_total_clasif("Gastos de operación")
-        gastos_marketing = obtener_total_clasif("Gastos de marketing y publicidad")
-        gastos_admin = obtener_total_clasif("Gastos administrativos")
-        gastos_financieros = obtener_total_clasif("Gastos financieros")
+            with col_filtro2:
+                # Ventas del periodo seleccionado
+                ventas_default = 290700.00 if mes_seleccionado in ["Enero 2026", "Histórico Completo (Acumulado)"] else 0.00
+                ventas_netas = st.number_input(f"Ventas Netas ({titulo_periodo}) $:", min_value=0.0, value=ventas_default, step=1000.0)
 
-        # Fórmulas idénticas a tu formato
-        utilidad_bruta = ventas_netas - costo_ventas
-        utilidad_operacion = utilidad_bruta - (gastos_operacion + gastos_marketing + gastos_admin)
-        utilidad_antes_impuestos = utilidad_operacion - gastos_financieros
-        
-        # ISR al 30% (solo aplica si hay utilidad)
-        isr_30 = round(utilidad_antes_impuestos * 0.30, 2) if utilidad_antes_impuestos > 0 else 0.0
-        iva_pnl = 0.0 # Se mantiene informativo según tu formato
-        
-        utilidad_neta = utilidad_antes_impuestos - isr_30
-        rentabilidad = round((utilidad_neta / ventas_netas * 100), 2) if ventas_netas > 0 else 0.0
+            with col_filtro3:
+                gastos_financieros_input = st.number_input("Gastos Financieros $:", min_value=0.0, value=3000.00 if mes_seleccionado in ["Enero 2026", "Histórico Completo (Acumulado)"] else 0.00, step=100.0)
 
-        # Construcción visual de la tabla idéntica a tu formato
-        pnl_data = [
-            {"Concepto": "Ventas Netas", "Parcial": None, "Total": f"${ventas_netas:,.2f}"},
-            {"Concepto": "Costos de ventas", "Parcial": None, "Total": f"${costo_ventas:,.2f}"},
-            {"Concepto": "UTILIDAD BRUTA", "Parcial": None, "Total": f"${utilidad_bruta:,.2f}"},
-            {"Concepto": "  - Gastos de operación", "Parcial": f"${gastos_operacion:,.2f}", "Total": None},
-            {"Concepto": "  - Gastos de marketing y publicidad", "Parcial": f"${gastos_marketing:,.2f}", "Total": None},
-            {"Concepto": "  - Gastos Administrativos", "Parcial": f"${gastos_admin:,.2f}", "Total": None},
-            {"Concepto": "UTILIDAD DE OPERACIÓN", "Parcial": None, "Total": f"${utilidad_operacion:,.2f}"},
-            {"Concepto": "  - Gastos financieros", "Parcial": f"${gastos_financieros:,.2f}", "Total": None},
-            {"Concepto": "UTILIDAD ANTES DE IMPUESTOS", "Parcial": None, "Total": f"${utilidad_antes_impuestos:,.2f}"},
-            {"Concepto": "  - ISR (30%)", "Parcial": None, "Total": f"${isr_30:,.2f}"},
-            {"Concepto": "  - IVA 16%", "Parcial": None, "Total": f"${iva_pnl:,.2f}"},
-            {"Concepto": "UTILIDAD NETA (Después de impuestos)", "Parcial": None, "Total": f"${utilidad_neta:,.2f}"},
-            {"Concepto": "RENTABILIDAD", "Parcial": None, "Total": f"{rentabilidad:.1f}%"}
-        ]
+            # Sumas por clasificación en el periodo filtrado
+            def sum_clasif(clasif_nombre):
+                if df_filtrado.empty:
+                    return 0.0
+                filtro = df_filtrado[df_filtrado["clasificacion"].str.strip().str.lower() == clasif_nombre.lower()]
+                return float(filtro["total_neto"].sum())
 
-        df_pnl = pd.DataFrame(pnl_data).fillna("")
-        
-        # Tarjetas de resumen arriba
-        c_kpi1, c_kpi2, c_kpi3 = st.columns(3)
-        c_kpi1.metric("Ventas Netas", f"${ventas_netas:,.2f}")
-        c_kpi2.metric("Utilidad Neta", f"${utilidad_neta:,.2f}", delta=f"{rentabilidad:.1f}%")
-        c_kpi3.metric("Rentabilidad", f"{rentabilidad:.1f}%")
+            costo_ventas = sum_clasif("Costos de ventas")
+            gastos_operacion = sum_clasif("Gastos de operación")
+            gastos_marketing = sum_clasif("Gastos de marketing y publicidad")
+            gastos_admin = sum_clasif("Gastos administrativos")
+            gastos_financieros = sum_clasif("Gastos financieros") + gastos_financieros_input
 
-        st.markdown("### Estado de Resultados")
-        st.dataframe(df_pnl, use_container_width=True, hide_index=True)
+            # Fórmulas del Estado de Resultados
+            utilidad_bruta = ventas_netas - costo_ventas
+            utilidad_operacion = utilidad_bruta - (gastos_operacion + gastos_marketing + gastos_admin)
+            utilidad_antes_impuestos = utilidad_operacion - gastos_financieros
+            isr_30 = round(utilidad_antes_impuestos * 0.30, 2) if utilidad_antes_impuestos > 0 else 0.0
+            utilidad_neta = utilidad_antes_impuestos - isr_30
+            rentabilidad = round((utilidad_neta / ventas_netas * 100), 2) if ventas_netas > 0 else 0.0
 
+            # Tabla oficial idéntica a tu formato
+            pnl_data = [
+                {"Concepto": "Ventas Netas", "Parcial": "", "Total": f"${ventas_netas:,.2f}"},
+                {"Concepto": "Costos de ventas", "Parcial": "", "Total": f"${costo_ventas:,.2f}"},
+                {"Concepto": "UTILIDAD BRUTA", "Parcial": "", "Total": f"${utilidad_bruta:,.2f}"},
+                {"Concepto": "  - Gastos de operación", "Parcial": f"${gastos_operacion:,.2f}", "Total": ""},
+                {"Concepto": "  - Gastos de marketing y publicidad", "Parcial": f"${gastos_marketing:,.2f}", "Total": ""},
+                {"Concepto": "  - Gastos Administrativos", "Parcial": f"${gastos_admin:,.2f}", "Total": ""},
+                {"Concepto": "UTILIDAD DE OPERACIÓN", "Parcial": "", "Total": f"${utilidad_operacion:,.2f}"},
+                {"Concepto": "  - Gastos financieros", "Parcial": f"${gastos_financieros:,.2f}", "Total": ""},
+                {"Concepto": "UTILIDAD ANTES DE IMPUESTOS", "Parcial": "", "Total": f"${utilidad_antes_impuestos:,.2f}"},
+                {"Concepto": "  - ISR (30%)", "Parcial": "", "Total": f"${isr_30:,.2f}"},
+                {"Concepto": "  - IVA 16%", "Parcial": "", "Total": "$0.00"},
+                {"Concepto": "UTILIDAD NETA (Después de impuestos)", "Parcial": "", "Total": f"${utilidad_neta:,.2f}"},
+                {"Concepto": "RENTABILIDAD", "Parcial": "", "Total": f"{rentabilidad:.1f}%"}
+            ]
+
+            df_pnl = pd.DataFrame(pnl_data)
+
+            # Tarjetas de KPI
+            k1, k2, k3 = st.columns(3)
+            k1.metric("Ventas Netas", f"${ventas_netas:,.2f}")
+            k2.metric("Utilidad Neta", f"${utilidad_neta:,.2f}", delta=f"{rentabilidad:.1f}%")
+            k3.metric("Rentabilidad", f"{rentabilidad:.1f}%")
+
+            st.markdown(f"#### Estado de Resultados: **{titulo_periodo}**")
+            st.dataframe(df_pnl, use_container_width=True, hide_index=True)
+
+            # Historial filtrado por el mes seleccionado
+            st.markdown(f"#### Detalle de transacciones de **{titulo_periodo}** ({len(df_filtrado)} movimientos)")
+            cols_ver = ["fecha", "clasificacion", "servicio_producto", "proveedor", "subtotal", "iva", "total_neto", "metodo_pago", "banco_origen", "comentarios"]
+            st.dataframe(df_filtrado[cols_ver], use_container_width=True, hide_index=True)
+
+        else:
+            st.info("No hay datos en la base de datos. Ejecuta el script SQL en Supabase para cargar el histórico.")
     except Exception as e:
         st.warning(f"Aviso en Estado de Resultados: {e}")
