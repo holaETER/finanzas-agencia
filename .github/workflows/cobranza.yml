@@ -1,0 +1,30 @@
+name: Cobranza Diaria WhatsApp
+
+on:
+  schedule:
+    # Corre todos los días a las 9:00 AM hora México (15:00 UTC)
+    - cron: '0 15 * * *'
+  workflow_dispatch: # Permite probarlo manualmente cuando tú quieras
+
+jobs:
+  ejecutar-cobranza:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Descargar repositorio
+        uses: actions/checkout@v3
+
+      - name: Configurar Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: Instalar librerías
+        run: pip install supabase requests
+
+      - name: Disparar cobranza
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          META_PHONE_ID: ${{ secrets.META_PHONE_ID }}
+          META_WA_TOKEN: ${{ secrets.META_WA_TOKEN }}
+        run: python cron_cobranza.py
