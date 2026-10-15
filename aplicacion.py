@@ -5,7 +5,7 @@ from supabase import create_client, Client
 
 st.set_page_config(page_title="Finanzas Agencia", page_icon="📈", layout="wide")
 
-# Conexión con Supabase con limpieza automática de URL
+# Conexión limpia con Supabase
 raw_url = st.secrets["SUPABASE_URL"].strip().rstrip("/")
 if raw_url.endswith("/rest/v1"):
     raw_url = raw_url.replace("/rest/v1", "").rstrip("/")
@@ -31,15 +31,20 @@ with tab1:
     col1, col2 = st.columns(2)
     with col1:
         fecha = st.date_input("Fecha de pago", date.today())
-        clasificacion = st.selectbox("Clasificación", ["Gastos administrativos", "Gastos de operación"])
-        servicio = st.text_input("Servicio / Concepto", placeholder="Honorarios, Capcut, Google One, Telcel...")
-        proveedor = st.text_input("Proveedor", placeholder="Pamela Gracia, Ivet Hernandez, Canva...")
+        # Clasificaciones exactas del Estado de Resultados
+        clasificacion = st.selectbox("Clasificación", [
+            "Gastos administrativos", 
+            "Gastos de operación", 
+            "Gastos de marketing y publicidad",
+            "Costos de ventas",
+            "Gastos financieros"
+        ])
+        servicio = st.text_input("Servicio / Concepto", placeholder="Honorarios, Capcut, Google One, Comisiones...")
+        proveedor = st.text_input("Proveedor", placeholder="Pamela Gracia, Ivet Hernandez, Canva, Banco...")
     
     with col2:
-        # AQUÍ INGRESAS EL TOTAL DIRECTO DE TU ESTADO DE CUENTA
-        total_ingresado = st.number_input("Monto Total Pagado (con IVA incluido)", min_value=0.0, step=50.0, format="%.2f")
+        total_ingresado = st.number_input("Monto Total Pagado (con IVA incluido)", min_value=0.0, step=100.0, format="%.2f")
         
-        # Cálculo automático y desglose en vivo
         if total_ingresado > 0:
             subtotal_calc = round(total_ingresado / 1.16, 2)
             iva_calc = round(total_ingresado - subtotal_calc, 2)
@@ -48,7 +53,7 @@ with tab1:
             subtotal_calc = 0.0
             iva_calc = 0.0
             
-        metodo = st.selectbox("Método de Pago", ["TRANSFERENCIA", "TD", "Efectivo"])
+        metodo = st.selectbox("Método de Pago", ["TRANSFERENCIA", "TD", "Efectivo", "Cargo automático"])
         banco = st.selectbox("Banco / Cuenta", ["BAJIO", "Azteca", "Cuenta Ivet", "Otro"])
         comentarios = st.text_input("Comentarios", placeholder="Opcional")
 
@@ -69,12 +74,12 @@ with tab1:
             }
             try:
                 supabase.table("egresos").insert(data).execute()
-                st.success(f"✅ Gasto guardado: Total ${total_ingresado:,.2f} (Subtotal: ${subtotal_calc:,.2f} | IVA: ${iva_calc:,.2f})")
+                st.success(f"✅ Gasto guardado: Total ${total_ingresado:,.2f} MXN")
                 st.rerun()
             except Exception as e:
                 st.error(f"Error al guardar: {e}")
         else:
-            st.error("Por favor completa servicio, proveedor y el monto total.")
+            st.error("Por favor completa los campos principales.")
 
 # ==============================
 # TAB 2: COBRANZA
@@ -88,7 +93,7 @@ with tab2:
         with st.form("form_cobranza", clear_on_submit=True):
             cliente = st.text_input("Nombre del Cliente")
             telefono = st.text_input("WhatsApp (ej. +5215512345678)")
-            concepto_c = st.text_input("Concepto de Factura", placeholder="Retainer mensual, Campaña...")
+            concepto_c = st.text_input("Concepto de Factura", placeholder="Retainer mensual...")
             monto_c = st.number_input("Monto a cobrar ($)", min_value=0.0, step=500.0)
             vencimiento = st.date_input("Fecha de Vencimiento")
             
@@ -104,7 +109,7 @@ with tab2:
                 }
                 try:
                     supabase.table("cobranza").insert(data_c).execute()
-                    st.success("Factura registrada para cobranza.")
+                    st.success("Factura registrada.")
                     st.rerun()
                 except Exception as e:
                     st.error(f"Error al guardar cobranza: {e}")
@@ -131,42 +136,75 @@ with tab2:
             st.warning(f"Aviso en módulo Cobranza: {e}")
 
 # ==============================
-# TAB 3: ESTADO DE RESULTADOS (P&L)
+# TAB 3: ESTADO DE RESULTADOS (P&L EXACTO)
 # ==============================
 with tab3:
-    st.subheader("Estado de Resultados y Desglose Financiero")
+    st.subheader("Estado de Resultados Oficial")
+    
+    # 1. Controles Superiores: Ventas del Mes
+    col_pnl1, col_pnl2 = st.columns([1, 1])
+    with col_pnl1:
+        # Permite ingresar las Ventas Netas del periodo
+        ventas_netas = st.number_input("Ventas Netas del Periodo ($ MXN):", min_value=0.0, value=290700.00, step=1000.0)
+    with col_pnl2:
+        st.info("💡 Los gastos se calculan y clasifican automáticamente en tiempo real con lo que capturas en la Tab 1.")
+
     try:
-        res_egresos = supabase.table("egresos").select("*").order("fecha", desc=True).execute()
-        if res_egresos.data:
-            df_eg = pd.DataFrame(res_egresos.data)
-            
-            # Formateo de números
-            total_neto = df_eg["total_neto"].sum()
-            subtotal_total = df_eg["subtotal"].sum()
-            iva_total = df_eg["iva"].sum()
-            
-            # Tarjetas Principales
-            c1, c2, c3 = st.columns(3)
-            c1.metric("Salida Total de Efectivo", f"${total_neto:,.2f} MXN")
-            c2.metric("Gasto Real Deducible (Subtotal)", f"${subtotal_total:,.2f} MXN")
-            c3.metric("IVA Acreditable (a favor)", f"${iva_total:,.2f} MXN")
-            
-            # Resumen por Clasificación (Administrativos vs Operación)
-            st.markdown("### Resumen por Clasificación")
-            resumen_tipo = df_eg.groupby("clasificacion")[["subtotal", "iva", "total_neto"]].sum().reset_index()
-            resumen_tipo.columns = ["Clasificación", "Subtotal (Gasto)", "IVA (16%)", "Total Neto"]
-            st.dataframe(resumen_tipo.style.format({
-                "Subtotal (Gasto)": "${:,.2f}",
-                "IVA (16%)": "${:,.2f}",
-                "Total Neto": "${:,.2f}"
-            }), use_container_width=True)
-            
-            # Detalle completo
-            st.markdown("### Historial Detallado de Egresos")
-            columnas_detalle = ["fecha", "clasificacion", "servicio_producto", "proveedor", "subtotal", "iva", "total_neto", "metodo_pago", "banco_origen", "comentarios"]
-            cols_existentes = [col for col in columnas_detalle if col in df_eg.columns]
-            st.dataframe(df_eg[cols_existentes], use_container_width=True)
-        else:
-            st.info("Aún no hay transacciones registradas.")
+        res_egresos = supabase.table("egresos").select("*").execute()
+        df_eg = pd.DataFrame(res_egresos.data) if res_egresos.data else pd.DataFrame()
+
+        # Calcular sumas por clasificación
+        def obtener_total_clasif(clasif_nombre):
+            if df_eg.empty or "clasificacion" not in df_eg.columns:
+                return 0.0
+            filtro = df_eg[df_eg["clasificacion"].str.strip().str.lower() == clasif_nombre.lower()]
+            return float(filtro["total_neto"].sum())
+
+        costo_ventas = obtener_total_clasif("Costos de ventas")
+        gastos_operacion = obtener_total_clasif("Gastos de operación")
+        gastos_marketing = obtener_total_clasif("Gastos de marketing y publicidad")
+        gastos_admin = obtener_total_clasif("Gastos administrativos")
+        gastos_financieros = obtener_total_clasif("Gastos financieros")
+
+        # Fórmulas idénticas a tu formato
+        utilidad_bruta = ventas_netas - costo_ventas
+        utilidad_operacion = utilidad_bruta - (gastos_operacion + gastos_marketing + gastos_admin)
+        utilidad_antes_impuestos = utilidad_operacion - gastos_financieros
+        
+        # ISR al 30% (solo aplica si hay utilidad)
+        isr_30 = round(utilidad_antes_impuestos * 0.30, 2) if utilidad_antes_impuestos > 0 else 0.0
+        iva_pnl = 0.0 # Se mantiene informativo según tu formato
+        
+        utilidad_neta = utilidad_antes_impuestos - isr_30
+        rentabilidad = round((utilidad_neta / ventas_netas * 100), 2) if ventas_netas > 0 else 0.0
+
+        # Construcción visual de la tabla idéntica a tu formato
+        pnl_data = [
+            {"Concepto": "Ventas Netas", "Parcial": None, "Total": f"${ventas_netas:,.2f}"},
+            {"Concepto": "Costos de ventas", "Parcial": None, "Total": f"${costo_ventas:,.2f}"},
+            {"Concepto": "UTILIDAD BRUTA", "Parcial": None, "Total": f"${utilidad_bruta:,.2f}"},
+            {"Concepto": "  - Gastos de operación", "Parcial": f"${gastos_operacion:,.2f}", "Total": None},
+            {"Concepto": "  - Gastos de marketing y publicidad", "Parcial": f"${gastos_marketing:,.2f}", "Total": None},
+            {"Concepto": "  - Gastos Administrativos", "Parcial": f"${gastos_admin:,.2f}", "Total": None},
+            {"Concepto": "UTILIDAD DE OPERACIÓN", "Parcial": None, "Total": f"${utilidad_operacion:,.2f}"},
+            {"Concepto": "  - Gastos financieros", "Parcial": f"${gastos_financieros:,.2f}", "Total": None},
+            {"Concepto": "UTILIDAD ANTES DE IMPUESTOS", "Parcial": None, "Total": f"${utilidad_antes_impuestos:,.2f}"},
+            {"Concepto": "  - ISR (30%)", "Parcial": None, "Total": f"${isr_30:,.2f}"},
+            {"Concepto": "  - IVA 16%", "Parcial": None, "Total": f"${iva_pnl:,.2f}"},
+            {"Concepto": "UTILIDAD NETA (Después de impuestos)", "Parcial": None, "Total": f"${utilidad_neta:,.2f}"},
+            {"Concepto": "RENTABILIDAD", "Parcial": None, "Total": f"{rentabilidad:.1f}%"}
+        ]
+
+        df_pnl = pd.DataFrame(pnl_data).fillna("")
+        
+        # Tarjetas de resumen arriba
+        c_kpi1, c_kpi2, c_kpi3 = st.columns(3)
+        c_kpi1.metric("Ventas Netas", f"${ventas_netas:,.2f}")
+        c_kpi2.metric("Utilidad Neta", f"${utilidad_neta:,.2f}", delta=f"{rentabilidad:.1f}%")
+        c_kpi3.metric("Rentabilidad", f"{rentabilidad:.1f}%")
+
+        st.markdown("### Estado de Resultados")
+        st.dataframe(df_pnl, use_container_width=True, hide_index=True)
+
     except Exception as e:
         st.warning(f"Aviso en Estado de Resultados: {e}")
