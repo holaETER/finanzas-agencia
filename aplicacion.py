@@ -5,7 +5,7 @@ from supabase import create_client, Client
 
 st.set_page_config(page_title="Finanzas Agencia", page_icon="📈", layout="wide")
 
-# Conexión con Supabase usando Secrets
+# Conexión con Supabase
 SUPABASE_URL = st.secrets["SUPABASE_URL"]
 SUPABASE_KEY = st.secrets["SUPABASE_KEY"]
 
@@ -19,7 +19,9 @@ st.title("⚡ Finanzas en Tiempo Real")
 
 tab1, tab2, tab3 = st.tabs(["➕ Captura de Egresos", "📲 Clientes y Cobranza", "📊 Estado de Resultados"])
 
+# ==============================
 # TAB 1: REGISTRO DE GASTOS
+# ==============================
 with tab1:
     st.subheader("Registrar Nuevo Gasto")
     with st.form("form_egreso", clear_on_submit=True):
@@ -56,13 +58,18 @@ with tab1:
                     "status": "Pagado",
                     "comentarios": comentarios
                 }
-                supabase.table("egresos").insert(data).execute()
-                st.success(f"✅ Gasto guardado con éxito. Total neto: ${total:,.2f} MXN")
-                st.rerun()
+                try:
+                    supabase.table("egresos").insert(data).execute()
+                    st.success(f"✅ Gasto guardado con éxito. Total neto: ${total:,.2f} MXN")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Error al guardar en base de datos: {e}")
             else:
                 st.error("Por favor completa los campos principales.")
 
+# ==============================
 # TAB 2: COBRANZA
+# ==============================
 with tab2:
     st.subheader("Control de Cobranza (WhatsApp)")
     col_a, col_b = st.columns([1, 2])
@@ -86,41 +93,52 @@ with tab2:
                     "fecha_vencimiento": str(vencimiento),
                     "status": "Pendiente"
                 }
-                supabase.table("cobranza").insert(data_c).execute()
-                st.success("Factura registrada.")
-                st.rerun()
+                try:
+                    supabase.table("cobranza").insert(data_c).execute()
+                    st.success("Factura registrada.")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Error al guardar cobranza: {e}")
 
     with col_b:
         st.markdown("**Facturas Pendientes**")
-        res_cobranza = supabase.table("cobranza").select("*").order("fecha_vencimiento").execute()
-        if res_cobranza.data:
-            df_cob = pd.DataFrame(res_cobranza.data)
-            st.dataframe(df_cob[["cliente", "concepto", "monto_total", "fecha_vencimiento", "status"]], use_container_width=True)
-            
-            pendientes = [f"{r['id']} - {r['cliente']} (${r['monto_total']})" for r in res_cobranza.data if r['status'] == 'Pendiente']
-            if pendientes:
-                cobro_id = st.selectbox("Marcar factura como liquidada:", pendientes).split(" - ")[0]
-                if st.button("Marcar como Pagado"):
-                    supabase.table("cobranza").update({"status": "Pagado"}).eq("id", cobro_id).execute()
-                    st.success("¡Cobro aplicado!")
-                    st.rerun()
-        else:
-            st.caption("No hay cobros pendientes.")
+        try:
+            res_cobranza = supabase.table("cobranza").select("*").execute()
+            if res_cobranza.data:
+                df_cob = pd.DataFrame(res_cobranza.data)
+                columnas_mostrar = [c for c in ["cliente", "concepto", "monto_total", "fecha_vencimiento", "status"] if c in df_cob.columns]
+                st.dataframe(df_cob[columnas_mostrar], use_container_width=True)
+                
+                pendientes = [f"{r['id']} - {r['cliente']} (${r['monto_total']})" for r in res_cobranza.data if r.get('status') == 'Pendiente']
+                if pendientes:
+                    cobro_id = st.selectbox("Marcar factura como liquidada:", pendientes).split(" - ")[0]
+                    if st.button("Marcar como Pagado"):
+                        supabase.table("cobranza").update({"status": "Pagado"}).eq("id", cobro_id).execute()
+                        st.success("¡Cobro aplicado!")
+                        st.rerun()
+            else:
+                st.caption("No hay cobros pendientes.")
+        except Exception as e:
+            st.warning(f"Aviso en módulo Cobranza: {e}")
 
+# ==============================
 # TAB 3: ESTADO DE RESULTADOS
+# ==============================
 with tab3:
     st.subheader("Métricas y Resumen")
-    res_egresos = supabase.table("egresos").select("*").order("fecha", desc=True).execute()
-    
-    if res_egresos.data:
-        df_eg = pd.DataFrame(res_egresos.data)
-        
-        kpi1, kpi2, kpi3 = st.columns(3)
-        kpi1.metric("Total Egresos", f"${df_eg['total_neto'].sum():,.2f}")
-        kpi2.metric("Subtotal Acumulado", f"${df_eg['subtotal'].sum():,.2f}")
-        kpi3.metric("IVA Acreditable Acumulado", f"${df_eg['iva'].sum():,.2f}")
-        
-        st.markdown("### Historial de Egresos")
-        st.dataframe(df_eg[["fecha", "clasificacion", "servicio_producto", "proveedor", "total_neto", "metodo_pago", "banco_origen", "comentarios"]], use_container_width=True)
-    else:
-        st.info("Aún no has registrado ningún gasto.")
+    try:
+        res_egresos = supabase.table("egresos").select("*").order("fecha", desc=True).execute()
+        if res_egresos.data:
+            df_eg = pd.DataFrame(res_egresos.data)
+            
+            kpi1, kpi2, kpi3 = st.columns(3)
+            kpi1.metric("Total Egresos", f"${df_eg['total_neto'].sum():,.2f}")
+            kpi2.metric("Subtotal Acumulado", f"${df_eg['subtotal'].sum():,.2f}")
+            kpi3.metric("IVA Acreditable Acumulado", f"${df_eg['iva'].sum():,.2f}")
+            
+            st.markdown("### Historial de Egresos")
+            st.dataframe(df_eg, use_container_width=True)
+        else:
+            st.info("Aún no has registrado ningún gasto.")
+    except Exception as e:
+        st.warning(f"Aviso en Estado de Resultados: {e}")
