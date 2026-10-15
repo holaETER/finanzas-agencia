@@ -5,9 +5,12 @@ from supabase import create_client, Client
 
 st.set_page_config(page_title="Finanzas Agencia", page_icon="📈", layout="wide")
 
-# Conexión con Supabase
-SUPABASE_URL = st.secrets["SUPABASE_URL"]
-SUPABASE_KEY = st.secrets["SUPABASE_KEY"]
+# Conexión con Supabase con limpieza automática de URL
+raw_url = st.secrets["SUPABASE_URL"].strip().rstrip("/")
+if raw_url.endswith("/rest/v1"):
+    raw_url = raw_url.replace("/rest/v1", "").rstrip("/")
+SUPABASE_URL = raw_url
+SUPABASE_KEY = st.secrets["SUPABASE_KEY"].strip()
 
 @st.cache_resource
 def get_supabase_client() -> Client:
@@ -24,48 +27,54 @@ tab1, tab2, tab3 = st.tabs(["➕ Captura de Egresos", "📲 Clientes y Cobranza"
 # ==============================
 with tab1:
     st.subheader("Registrar Nuevo Gasto")
-    with st.form("form_egreso", clear_on_submit=True):
-        c1, c2 = st.columns(2)
-        with c1:
-            fecha = st.date_input("Fecha", date.today())
-            clasificacion = st.selectbox("Clasificación", ["Gastos administrativos", "Gastos de operación"])
-            servicio = st.text_input("Servicio / Concepto", placeholder="Honorarios, Capcut, Google One...")
-            proveedor = st.text_input("Proveedor", placeholder="Pamela Gracia, Ivet Hernandez, Canva...")
+    
+    col1, col2 = st.columns(2)
+    with col1:
+        fecha = st.date_input("Fecha de pago", date.today())
+        clasificacion = st.selectbox("Clasificación", ["Gastos administrativos", "Gastos de operación"])
+        servicio = st.text_input("Servicio / Concepto", placeholder="Honorarios, Capcut, Google One, Telcel...")
+        proveedor = st.text_input("Proveedor", placeholder="Pamela Gracia, Ivet Hernandez, Canva...")
+    
+    with col2:
+        # AQUÍ INGRESAS EL TOTAL DIRECTO DE TU ESTADO DE CUENTA
+        total_ingresado = st.number_input("Monto Total Pagado (con IVA incluido)", min_value=0.0, step=50.0, format="%.2f")
         
-        with c2:
-            subtotal = st.number_input("Subtotal (sin IVA)", min_value=0.0, step=100.0, format="%.2f")
-            metodo = st.selectbox("Método de Pago", ["TRANSFERENCIA", "TD", "Efectivo"])
-            banco = st.selectbox("Banco / Cuenta", ["BAJIO", "Azteca", "Cuenta Ivet", "Otro"])
-            comentarios = st.text_input("Comentarios", placeholder="Opcional")
+        # Cálculo automático y desglose en vivo
+        if total_ingresado > 0:
+            subtotal_calc = round(total_ingresado / 1.16, 2)
+            iva_calc = round(total_ingresado - subtotal_calc, 2)
+            st.info(f"💡 **Desglose:** Subtotal: **${subtotal_calc:,.2f}** | IVA (16%): **${iva_calc:,.2f}** | Total: **${total_ingresado:,.2f}**")
+        else:
+            subtotal_calc = 0.0
+            iva_calc = 0.0
+            
+        metodo = st.selectbox("Método de Pago", ["TRANSFERENCIA", "TD", "Efectivo"])
+        banco = st.selectbox("Banco / Cuenta", ["BAJIO", "Azteca", "Cuenta Ivet", "Otro"])
+        comentarios = st.text_input("Comentarios", placeholder="Opcional")
 
-        submit_egreso = st.form_submit_button("💾 Guardar Egreso")
-
-        if submit_egreso:
-            if subtotal > 0 and servicio and proveedor:
-                iva = round(subtotal * 0.16, 2)
-                total = round(subtotal + iva, 2)
-                
-                data = {
-                    "fecha": str(fecha),
-                    "clasificacion": clasificacion,
-                    "servicio_producto": servicio,
-                    "proveedor": proveedor,
-                    "subtotal": subtotal,
-                    "iva": iva,
-                    "total_neto": total,
-                    "metodo_pago": metodo,
-                    "banco_origen": banco,
-                    "status": "Pagado",
-                    "comentarios": comentarios
-                }
-                try:
-                    supabase.table("egresos").insert(data).execute()
-                    st.success(f"✅ Gasto guardado con éxito. Total neto: ${total:,.2f} MXN")
-                    st.rerun()
-                except Exception as e:
-                    st.error(f"Error al guardar en base de datos: {e}")
-            else:
-                st.error("Por favor completa los campos principales.")
+    if st.button("💾 Guardar Egreso en Tiempo Real", type="primary", use_container_width=True):
+        if total_ingresado > 0 and servicio and proveedor:
+            data = {
+                "fecha": str(fecha),
+                "clasificacion": clasificacion,
+                "servicio_producto": servicio,
+                "proveedor": proveedor,
+                "subtotal": subtotal_calc,
+                "iva": iva_calc,
+                "total_neto": total_ingresado,
+                "metodo_pago": metodo,
+                "banco_origen": banco,
+                "status": "Pagado",
+                "comentarios": comentarios
+            }
+            try:
+                supabase.table("egresos").insert(data).execute()
+                st.success(f"✅ Gasto guardado: Total ${total_ingresado:,.2f} (Subtotal: ${subtotal_calc:,.2f} | IVA: ${iva_calc:,.2f})")
+                st.rerun()
+            except Exception as e:
+                st.error(f"Error al guardar: {e}")
+        else:
+            st.error("Por favor completa servicio, proveedor y el monto total.")
 
 # ==============================
 # TAB 2: COBRANZA
@@ -79,7 +88,7 @@ with tab2:
         with st.form("form_cobranza", clear_on_submit=True):
             cliente = st.text_input("Nombre del Cliente")
             telefono = st.text_input("WhatsApp (ej. +5215512345678)")
-            concepto_c = st.text_input("Concepto de Factura", placeholder="Retainer mensual...")
+            concepto_c = st.text_input("Concepto de Factura", placeholder="Retainer mensual, Campaña...")
             monto_c = st.number_input("Monto a cobrar ($)", min_value=0.0, step=500.0)
             vencimiento = st.date_input("Fecha de Vencimiento")
             
@@ -95,7 +104,7 @@ with tab2:
                 }
                 try:
                     supabase.table("cobranza").insert(data_c).execute()
-                    st.success("Factura registrada.")
+                    st.success("Factura registrada para cobranza.")
                     st.rerun()
                 except Exception as e:
                     st.error(f"Error al guardar cobranza: {e}")
@@ -122,23 +131,42 @@ with tab2:
             st.warning(f"Aviso en módulo Cobranza: {e}")
 
 # ==============================
-# TAB 3: ESTADO DE RESULTADOS
+# TAB 3: ESTADO DE RESULTADOS (P&L)
 # ==============================
 with tab3:
-    st.subheader("Métricas y Resumen")
+    st.subheader("Estado de Resultados y Desglose Financiero")
     try:
         res_egresos = supabase.table("egresos").select("*").order("fecha", desc=True).execute()
         if res_egresos.data:
             df_eg = pd.DataFrame(res_egresos.data)
             
-            kpi1, kpi2, kpi3 = st.columns(3)
-            kpi1.metric("Total Egresos", f"${df_eg['total_neto'].sum():,.2f}")
-            kpi2.metric("Subtotal Acumulado", f"${df_eg['subtotal'].sum():,.2f}")
-            kpi3.metric("IVA Acreditable Acumulado", f"${df_eg['iva'].sum():,.2f}")
+            # Formateo de números
+            total_neto = df_eg["total_neto"].sum()
+            subtotal_total = df_eg["subtotal"].sum()
+            iva_total = df_eg["iva"].sum()
             
-            st.markdown("### Historial de Egresos")
-            st.dataframe(df_eg, use_container_width=True)
+            # Tarjetas Principales
+            c1, c2, c3 = st.columns(3)
+            c1.metric("Salida Total de Efectivo", f"${total_neto:,.2f} MXN")
+            c2.metric("Gasto Real Deducible (Subtotal)", f"${subtotal_total:,.2f} MXN")
+            c3.metric("IVA Acreditable (a favor)", f"${iva_total:,.2f} MXN")
+            
+            # Resumen por Clasificación (Administrativos vs Operación)
+            st.markdown("### Resumen por Clasificación")
+            resumen_tipo = df_eg.groupby("clasificacion")[["subtotal", "iva", "total_neto"]].sum().reset_index()
+            resumen_tipo.columns = ["Clasificación", "Subtotal (Gasto)", "IVA (16%)", "Total Neto"]
+            st.dataframe(resumen_tipo.style.format({
+                "Subtotal (Gasto)": "${:,.2f}",
+                "IVA (16%)": "${:,.2f}",
+                "Total Neto": "${:,.2f}"
+            }), use_container_width=True)
+            
+            # Detalle completo
+            st.markdown("### Historial Detallado de Egresos")
+            columnas_detalle = ["fecha", "clasificacion", "servicio_producto", "proveedor", "subtotal", "iva", "total_neto", "metodo_pago", "banco_origen", "comentarios"]
+            cols_existentes = [col for col in columnas_detalle if col in df_eg.columns]
+            st.dataframe(df_eg[cols_existentes], use_container_width=True)
         else:
-            st.info("Aún no has registrado ningún gasto.")
+            st.info("Aún no hay transacciones registradas.")
     except Exception as e:
         st.warning(f"Aviso en Estado de Resultados: {e}")
